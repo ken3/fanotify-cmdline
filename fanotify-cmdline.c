@@ -10,6 +10,7 @@
 #include <sys/stat.h>
 #include <sys/signalfd.h>
 #include <fcntl.h>
+#include <time.h>
 
 #include <linux/fanotify.h>
 
@@ -29,7 +30,7 @@ enum {
   FD_POLL_MAX
 };
 
-/* Setup fanotify-cmdline notifications (FAN) mask. All these defined in fanotify-cmdline.h. */
+/* Setup fanotify notifications (FAN) mask. All these defined in fanotify.h. */
 static uint64_t event_mask =
     (FAN_ACCESS |         /* File accessed */
         FAN_MODIFY |         /* File modified */
@@ -43,7 +44,8 @@ static uint64_t event_mask =
 static monitored_t *monitors;
 static int n_monitors;
 
-static char *get_program_name_from_pid(int pid, char *buffer, size_t buffer_size) {
+static char *get_program_cmdline_from_pid(int pid, char *buffer, size_t buffer_size) {
+    int i;
     int fd;
     ssize_t len;
     char *aux;
@@ -60,10 +62,13 @@ static char *get_program_name_from_pid(int pid, char *buffer, size_t buffer_size
     }
     close(fd);
 
+    for (i = 0; i < len; i++) {
+        if (buffer[i] == '\0') {
+            buffer[i] = ' ';
+        }
+    }
+
     buffer[len] = '\0';
-    aux = strstr(buffer, "^@");
-    if (aux)
-        *aux = '\0';
 
     return buffer;
 }
@@ -84,29 +89,35 @@ static char *get_file_path_from_fd(int fd, char *buffer, size_t buffer_size) {
 
 static void event_process(struct fanotify_event_metadata *event) {
     char path[PATH_MAX];
+    time_t current_time;
+    char *c_time_string;
 
-    printf("Received event in path '%s'",
-           get_file_path_from_fd(event->fd,
-                                 path,
-                                 PATH_MAX) ?
-           path : "unknown");
-    printf(" pid=%d (%s): \n",
+    current_time = time(NULL);
+    c_time_string = ctime(&current_time);
+
+    printf("%s [%d] Event on '%s':\n",
+           strtok(c_time_string, "\n"),
            event->pid,
-           (get_program_name_from_pid(event->pid,
-                                      path,
-                                      PATH_MAX) ?
-            path : "unknown"));
+           get_file_path_from_fd(event->fd, path, PATH_MAX) ? path : "unknown");
 
+    printf("%s [%d] Event: ", strtok(c_time_string, "\n"), event->pid);
     if (event->mask & FAN_OPEN)
-        printf("\tFAN_OPEN\n");
+        printf("FAN_OPEN ");
     if (event->mask & FAN_ACCESS)
-        printf("\tFAN_ACCESS\n");
+        printf("FAN_ACCESS ");
     if (event->mask & FAN_MODIFY)
-        printf("\tFAN_MODIFY\n");
+        printf("FAN_MODIFY ");
     if (event->mask & FAN_CLOSE_WRITE)
-        printf("\tFAN_CLOSE_WRITE\n");
+        printf("FAN_CLOSE_WRITE ");
     if (event->mask & FAN_CLOSE_NOWRITE)
-        printf("\tFAN_CLOSE_NOWRITE\n");
+        printf("FAN_CLOSE_NOWRITE ");
+    printf("\n");
+
+    printf("%s [%d] Cmdline: %s\n\n",
+           strtok(c_time_string, "\n"),
+           event->pid,
+           (get_program_cmdline_from_pid(event->pid, path, PATH_MAX) ? path : "unknown"));
+
     fflush(stdout);
 
     close(event->fd);
