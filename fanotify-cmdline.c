@@ -12,7 +12,7 @@
 #include <fcntl.h>
 #include <time.h>
 
-#include <linux/fanotify.h>
+#include <sys/fanotify.h>
 
 /* Structure to keep track of monitored directories */
 typedef struct {
@@ -48,7 +48,6 @@ static char *get_program_cmdline_from_pid(int pid, char *buffer, size_t buffer_s
     int i;
     int fd;
     ssize_t len;
-    char *aux;
 
     /* Try to get program name by PID */
     sprintf(buffer, "/proc/%d/cmdline", pid);
@@ -75,12 +74,13 @@ static char *get_program_cmdline_from_pid(int pid, char *buffer, size_t buffer_s
 
 static char *get_file_path_from_fd(int fd, char *buffer, size_t buffer_size) {
     ssize_t len;
+    char fdpath[PATH_MAX];
 
     if (fd <= 0)
         return NULL;
 
-    sprintf(buffer, "/proc/self/fd/%d", fd);
-    if ((len = readlink(buffer, buffer, buffer_size - 1)) < 0)
+    sprintf(fdpath, "/proc/self/fd/%d", fd);
+    if ((len = readlink(fdpath, buffer, buffer_size - 1)) < 0)
         return NULL;
 
     buffer[len] = '\0';
@@ -210,15 +210,81 @@ static int initialize_signals(void) {
     return signal_fd;
 }
 
+uint64_t getmask(const char *name) {
+    struct {
+        const char*    name;
+        const uint64_t value;
+    } fanmask[] = {
+        {"ACCESS",         FAN_ACCESS},
+        {"MODIFY",         FAN_MODIFY},
+        {"CLOSE_WRITE",    FAN_CLOSE_WRITE},
+        {"CLOSE_NOWRITE",  FAN_CLOSE_NOWRITE},
+        {"OPEN",           FAN_OPEN},
+        {"ONDIR",          FAN_ONDIR},
+        {"EVENT_ON_CHILD", FAN_EVENT_ON_CHILD},
+        {NULL,             0}
+    };
+    int i = 0;
+    do {
+        if (strcmp(name, fanmask[i].name) == 0) return fanmask[i].value;
+    } while (fanmask[++i].name != NULL);
+    return 0;
+}
+
 int main(int argc,
          const char **argv) {
     int signal_fd;
     int fanotify_fd;
     struct pollfd fds[FD_POLL_MAX];
+    uint64_t mask;
+    int i = 0;
 
     /* Input arguments... */
+    fprintf(stderr, "argc = %d\n", argc);
     if (argc < 2) {
-        fprintf(stderr, "Usage: %s directory1 [directory2 ...]\n", argv[0]);
+        fprintf(stderr, "Usage: %s [-e mask | +e mask]... directory1 [directory2 ...]\n", argv[0]);
+        fprintf(stderr, "mask: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, ONDIR, EVENT_ON_CHILD\n");
+        exit(EXIT_FAILURE);
+    }
+
+    /* Parse options */
+    if (strcmp(argv[1], "+e") == 0) event_mask = 0;
+    fprintf(stderr, "event_mask = 0x%08lx\n", event_mask);
+    for (i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "+e") == 0) {
+            if (++i < argc) {
+                mask = getmask(argv[i]);
+                if (mask == 0) {
+                    fprintf(stderr, "+set invalid(%s)\n", argv[i]);
+                } else {
+                    fprintf(stderr, "+set 0x%08lx\n", mask);
+                    event_mask |= mask;
+                }
+            } else {
+                break;
+            }
+        } else if (strcmp(argv[i], "-e") == 0) {
+            if (++i < argc) {
+                mask = getmask(argv[i]);
+                if (mask == 0) {
+                    fprintf(stderr, "-reset invalid(%s)\n", argv[i]);
+                } else {
+                    fprintf(stderr, "-reset 0x%08lx\n", mask);
+                    event_mask &= ~mask;
+                }
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+    fprintf(stderr, "event_mask = 0x%08lx\n", event_mask);
+    fprintf(stderr, "i = %d\n", i);
+    fprintf(stderr, "argv[%d] = %s\n", i, argv[i]);
+    if (argc <= i) {
+        fprintf(stderr, "Usage: %s [-e mask | +e mask]... directory1 [directory2 ...]\n", argv[0]);
+        fprintf(stderr, "mask: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, ONDIR, EVENT_ON_CHILD\n");
         exit(EXIT_FAILURE);
     }
 
@@ -229,7 +295,8 @@ int main(int argc,
     }
 
     /* Initialize fanotify-cmdline FD and the marks */
-    if ((fanotify_fd = initialize_fanotify(argc, argv)) < 0) {
+    --i;
+    if ((fanotify_fd = initialize_fanotify(argc - i, &argv[i])) < 0) {
         fprintf(stderr, "Couldn't initialize fanotify-cmdline\n");
         exit(EXIT_FAILURE);
     }
