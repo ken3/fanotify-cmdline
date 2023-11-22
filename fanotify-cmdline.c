@@ -11,8 +11,20 @@
 #include <sys/signalfd.h>
 #include <fcntl.h>
 #include <time.h>
+#include <stdarg.h>
 
 #include <sys/fanotify.h>
+
+void debug_printf(char *format, ...)
+{
+#ifdef DEBUG
+    va_list args;
+    va_start(args, format);
+    vfprintf(stderr, format, args);
+    va_end(args);
+#endif
+    return;
+}
 
 /* Structure to keep track of monitored directories */
 typedef struct {
@@ -172,7 +184,7 @@ static int initialize_fanotify(int argc, const char **argv) {
             return -1;
         }
 
-        printf("Started monitoring directory '%s'...\n",
+        printf("Started monitoring '%s'...\n",
                monitors[i].path);
     }
 
@@ -211,6 +223,8 @@ static int initialize_signals(void) {
 }
 
 uint64_t getmask(const char *name) {
+    const char *prefix = "FAN_";
+    size_t len = strlen(prefix);
     struct {
         const char*    name;
         const uint64_t value;
@@ -224,9 +238,16 @@ uint64_t getmask(const char *name) {
         {"EVENT_ON_CHILD", FAN_EVENT_ON_CHILD},
         {NULL,             0}
     };
+    char *body = strcasestr(name, prefix);
+    if (body == NULL) {
+        body = (char*)name;
+    } else {
+        body += len;
+    }
+    debug_printf("body = %s\n", body);
     int i = 0;
     do {
-        if (strcmp(name, fanmask[i].name) == 0) return fanmask[i].value;
+        if (strcasecmp(body, fanmask[i].name) == 0) return fanmask[i].value;
     } while (fanmask[++i].name != NULL);
     return 0;
 }
@@ -240,7 +261,7 @@ int main(int argc,
     int i = 0;
 
     /* Input arguments... */
-    fprintf(stderr, "argc = %d\n", argc);
+    debug_printf("argc = %d\n", argc);
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [-e mask | +e mask]... directory1 [directory2 ...]\n", argv[0]);
         fprintf(stderr, "mask: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, ONDIR, EVENT_ON_CHILD\n");
@@ -249,15 +270,15 @@ int main(int argc,
 
     /* Parse options */
     if (strcmp(argv[1], "+e") == 0) event_mask = 0;
-    fprintf(stderr, "event_mask = 0x%08lx\n", event_mask);
+    debug_printf("event_mask = 0x%08lx\n", event_mask);
     for (i = 1; i < argc; i++) {
         if (strcmp(argv[i], "+e") == 0) {
             if (++i < argc) {
                 mask = getmask(argv[i]);
                 if (mask == 0) {
-                    fprintf(stderr, "+set invalid(%s)\n", argv[i]);
+                    debug_printf("+set invalid(%s)\n", argv[i]);
                 } else {
-                    fprintf(stderr, "+set 0x%08lx\n", mask);
+                    debug_printf("+set 0x%08lx\n", mask);
                     event_mask |= mask;
                 }
             } else {
@@ -267,9 +288,9 @@ int main(int argc,
             if (++i < argc) {
                 mask = getmask(argv[i]);
                 if (mask == 0) {
-                    fprintf(stderr, "-reset invalid(%s)\n", argv[i]);
+                    debug_printf("-reset invalid(%s)\n", argv[i]);
                 } else {
-                    fprintf(stderr, "-reset 0x%08lx\n", mask);
+                    debug_printf("-reset 0x%08lx\n", mask);
                     event_mask &= ~mask;
                 }
             } else {
@@ -279,9 +300,9 @@ int main(int argc,
             break;
         }
     }
-    fprintf(stderr, "event_mask = 0x%08lx\n", event_mask);
-    fprintf(stderr, "i = %d\n", i);
-    fprintf(stderr, "argv[%d] = %s\n", i, argv[i]);
+    debug_printf("event_mask = 0x%08lx\n", event_mask);
+    debug_printf("i = %d\n", i);
+    debug_printf("argv[%d] = %s\n", i, argv[i]);
     if (argc <= i) {
         fprintf(stderr, "Usage: %s [-e mask | +e mask]... directory1 [directory2 ...]\n", argv[0]);
         fprintf(stderr, "mask: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, ONDIR, EVENT_ON_CHILD\n");
