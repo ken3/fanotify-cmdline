@@ -224,7 +224,7 @@ static int initialize_signals(void) {
 
 uint64_t getmask(const char *name) {
     const char *prefix = "FAN_";
-    size_t len = strlen(prefix);
+    const size_t len = strlen(prefix);
     struct {
         const char*    name;
         const uint64_t value;
@@ -238,12 +238,7 @@ uint64_t getmask(const char *name) {
         {"EVENT_ON_CHILD", FAN_EVENT_ON_CHILD},
         {NULL,             0}
     };
-    char *body = strcasestr(name, prefix);
-    if (body == NULL) {
-        body = (char*)name;
-    } else {
-        body += len;
-    }
+    const char *body = strncasecmp(name, prefix, len) ? name : &name[len];
     debug_printf("body = %s\n", body);
     int i = 0;
     do {
@@ -265,6 +260,8 @@ int main(int argc,
     if (argc < 2) {
         fprintf(stderr, "Usage: %s [-e mask | +e mask]... directory1 [directory2 ...]\n", argv[0]);
         fprintf(stderr, "mask: ACCESS, MODIFY, CLOSE_WRITE, CLOSE_NOWRITE, OPEN, ONDIR, EVENT_ON_CHILD\n");
+        fprintf(stderr, "ex1) %s +e ACCESS +e MODIFY /var/log/messages\n", argv[0]);
+        fprintf(stderr, "ex2) %s -e ONDIR -e EVENT_ON_CHILD /var/log/messages\n", argv[0]);
         exit(EXIT_FAILURE);
     }
 
